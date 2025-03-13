@@ -32,3 +32,17 @@ class ContextualRecommendationView(APIView):
             "explanation": explanation
         })
 
+
+
+from django.http import JsonResponse
+from recommendations.services import recommend_collaborative
+from movies.serializers import MovieSerializer
+
+
+class CollaborativeRecommendView(APIView):
+    """API to get personalized recommendations with explanations."""
+
+    def get(self, request, movie_id):
+        recommendations = recommend_collaborative(movie_id)
+        serialized_movies = MovieSerializer(recommendations, many=True)
+        return JsonResponse({"recommendations": serialized_movies.data})

@@ -7,6 +7,10 @@ from sklearn.metrics.pairwise import cosine_similarity
 import pickle
 
 
+from django.core.cache import cache
+
+CACHE_TIMEOUT = 60 * 60
+
 def generate_and_store_embeddings():
     """
     Generate BERT embeddings for all movies and store them in the database
@@ -81,6 +85,13 @@ def recommend_similar_movies(movie_id, top_n=5):
     
     """
 
+    #check cache first
+    cache_key = f"movie_recommendations_{movie_id}"
+    cache_recommendations = cache.get(cache_key)
+
+    if cache_recommendations:
+        return Movie.objects.filter(id__in=cache_recommendations)
+
     target_embedding = get_movie_embedding(movie_id)
     if target_embedding is None:
         return []
@@ -92,6 +103,8 @@ def recommend_similar_movies(movie_id, top_n=5):
 
     similar_indices = np.argsort(similarities)[::-1][1:top_n+1] #sort in descending order
     similar_movie_ids = [movie_ids[i] for i in similar_indices]
+
+    cache.set(cache_key, similar_movie_ids, timeout=CACHE_TIMEOUT)
 
 
     return Movie.objects.filter(id__in=similar_movie_ids)
@@ -145,4 +158,41 @@ def get_movie_recommendation_with_explanation(movie_id):
 
 
 
+
+## Collaborative Filtering
+import pandas as pd
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.neighbors import NearestNeighbors
+from movies.models import Movie
+
+
+def get_numerical_features():
+    movies = Movie.objects.all().values("id", "budget", "popularity", "runtime", "vote_average", "vote_count")
+    df = pd.DataFrame(movies)
+
+    scaler = MinMaxScaler()
+    df[["budget", "popularity", "runtime", "vote_average", "vote_count"]] = scaler.fit_transform(
+        df[["budget", "popularity", "runtime", "vote_average", "vote_count"]]
+    )
+
+    return df
+
+
+
+def recommend_collaborative(movie_id, top_n=5):
+
+    df = get_numerical_features()
+
+    x = df.drop(columns=['id']).values
+
+    knn = NearestNeighbors(n_neighbors=top_n+1, metric="euclidean")
+    knn.fit(x)
+
+    movie_idx = df[df["id"] == movie_id].index[0]
+
+    distances, indices = knn.kneighbors([x[movie_idx]])
+
+    recommended_movie_ids = df.iloc[indices[0][1:]]["id"].tolist()
+
+    return Movie.objects.filter(id__in=recommended_movie_ids)
 
